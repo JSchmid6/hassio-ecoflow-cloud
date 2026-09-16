@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from homeassistant.core import callback
-from paho.mqtt.client import Client, ConnectFlags, DisconnectFlags, MQTTMessage, PayloadType
+from paho.mqtt.client import MQTT_ERR_SUCCESS, Client, ConnectFlags, DisconnectFlags, MQTTMessage, PayloadType
 from paho.mqtt.enums import CallbackAPIVersion
 from paho.mqtt.properties import Properties
 from paho.mqtt.reasoncodes import ReasonCode
@@ -138,7 +138,16 @@ class EcoflowMQTTClient:
 
     def publish(self, topic: str, message: PayloadType) -> None:
         try:
-            info = self.__client.publish(topic, message, 1)
+            # QoS 0 on purpose: paho keeps every QoS 1 publish that has not been
+            # PUBACKed (sent while offline, or lost with a dying connection) and
+            # re-sends it after the next successful reconnect, no matter how old
+            # it is. For set commands that replays a stale actuator state, e.g.
+            # switching the AC output off hours after the original command
+            # (#819). Dropping a command that could not be delivered right away
+            # is the lesser evil.
+            info = self.__client.publish(topic, message, 0)
+            if info.rc != MQTT_ERR_SUCCESS:
+                _LOGGER.warning("MQTT message to %s was not sent: %s", topic, info.rc)
             _LOGGER.debug("Sending " + str(message) + " :" + str(info) + "(" + str(info.is_published()) + ")")
         except RuntimeError as error:
             _LOGGER.error("Error on topic %s and message %s: %s", topic, message, error)
